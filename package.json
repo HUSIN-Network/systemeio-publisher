@@ -1,0 +1,19 @@
+# in your repo folder
+cat > package.json <<'JSON'
+{
+  "name": "systemeio-publisher",
+  "version": "1.0.0",
+  "main": "publish.js",
+  "scripts": {
+    "start": "node publish.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^11.0.0",
+    "playwright": "^1.40.0"
+  }
+}
+JSON
+
+git add package.json
+git commit -m "Add package.json"
+git push
