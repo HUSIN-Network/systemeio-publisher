@@ -1,0 +1,40 @@
+name: Publish products to systeme.io
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          npm ci || npm install
+          npx playwright install --with-deps
+
+      - name: Run publisher
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_COLLECTION: products
+          SYSTEME_USER: ${{ secrets.SYSTEME_USER }}
+          SYSTEME_PASS: ${{ secrets.SYSTEME_PASS }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          node publish.js
+
+      - name: Upload logs and screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-artifacts
+          path: |
+            *.png
+            *.log
