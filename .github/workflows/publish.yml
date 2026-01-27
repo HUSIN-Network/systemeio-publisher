@@ -16,21 +16,63 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Install Node dependencies and Playwright
         run: |
           npm install
           npx playwright install --with-deps
 
-      - name: Run publisher
+      - name: Run Node publisher (create products via UI)
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_COLLECTION: products
+          # Point to the artifacts path where growth_engine writes products
+          FIREBASE_COLLECTION: artifacts/husin-network/public/data/products
           SYSTEME_USER: ${{ secrets.SYSTEME_USER }}
           SYSTEME_PASS: ${{ secrets.SYSTEME_PASS }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           node publish.js
+
+      - name: Setup Python (for API page publishing)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies (if any)
+        run: |
+          if [ -f requirements.txt ]; then
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+          fi
+
+      - name: Run Python publisher (update Systeme pages via API)
+        env:
+          # Reuse the same Firebase service account so the Python publisher can access Firestore if needed
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          # Systeme API credentials (must be added to repo secrets)
+          SYSTEME_API_KEY: ${{ secrets.SYSTEME_API_KEY }}
+          SYSTEME_WEBSITE_ID: ${{ secrets.SYSTEME_WEBSITE_ID }}
+          SYSTEME_HOME_PAGE_ID: ${{ secrets.SYSTEME_HOME_PAGE_ID }}
+          SYSTEME_CATEGORIES_PAGE_ID: ${{ secrets.SYSTEME_CATEGORIES_PAGE_ID }}
+          SYSTEME_PRODUCTS_PAGE_ID: ${{ secrets.SYSTEME_PRODUCTS_PAGE_ID }}
+          SYSTEME_BUNDLES_PAGE_ID: ${{ secrets.SYSTEME_BUNDLES_PAGE_ID }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          if [ -n "${SYSTEME_API_KEY}" ] && [ -n "${SYSTEME_WEBSITE_ID}" ]; then
+            python3 - <<'PY'
+import os
+try:
+    from agent1_core import publish_all
+    publish_all()
+    print("Pages published via Systeme API.")
+except Exception as e:
+    print("Python publisher failed:", e)
+    raise
+PY
+          else
+            echo "SYSTEME_API_KEY or SYSTEME_WEBSITE_ID not set; skipping API page publish."
+          fi
 
       - name: Upload logs and screenshots
         if: failure()
