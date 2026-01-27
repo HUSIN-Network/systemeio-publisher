@@ -37,7 +37,6 @@ async function createProductViaUI(page, product) {
   await page.goto('https://app.systeme.io/products/new', { waitUntil: 'networkidle' });
 
   // Wait for the form to appear - selectors may need adjustment
-  // Title
   await page.waitForSelector('input[name="title"], input[placeholder="Product name"], textarea[name="title"]', { timeout: 15000 });
   const titleInput = await page.$('input[name="title"], input[placeholder="Product name"], textarea[name="title"]');
   await titleInput.fill(product.title || '');
@@ -61,20 +60,16 @@ async function createProductViaUI(page, product) {
 
   // Description / HTML editor - many editors are iframes or contenteditable
   const html = buildDescription(product);
-  // Try common editor approaches
-  // 1) If there's a textarea for HTML
   const textarea = await page.$('textarea[name="description"], textarea[placeholder*="description"]');
   if (textarea) {
     await textarea.fill(html);
   } else {
-    // 2) If editor is contenteditable
     const editable = await page.$('[contenteditable="true"]');
     if (editable) {
       await editable.click();
-      await editable.fill(''); // clear
+      await editable.fill('');
       await editable.type(html, { delay: 5 });
     } else {
-      // 3) If editor is inside an iframe
       const frames = page.frames();
       for (const f of frames) {
         try {
@@ -88,21 +83,44 @@ async function createProductViaUI(page, product) {
     }
   }
 
-  // Images - if product.images array exists, try to insert URLs
-  if (Array.isArray(product.images) && product.images.length) {
-    for (const imgUrl of product.images) {
-      // Try to find an "Add image" button and paste URL
-      const addBtn = await page.$('button:has-text("Add image"), button:has-text("Upload image")');
+  // Images - upload all images; first image treated as main
+  const images = Array.isArray(product.images) && product.images.length ? product.images : [FALLBACK_IMAGE_URL];
+
+  // Attempt multiple strategies to attach images; robust but may need selector tuning
+  for (let i = 0; i < images.length; i++) {
+    const imgUrl = images[i];
+    try {
+      // Try to click an "Add image" or "Upload image" button
+      const addBtn = await page.$('button:has-text("Add image"), button:has-text("Upload image"), button:has-text("Add media")');
       if (addBtn) {
         await addBtn.click();
-        // If a URL field appears
-        const urlInput = await page.$('input[placeholder*="http"], input[name="image_url"]');
+        // If a URL input appears, paste the URL
+        const urlInput = await page.$('input[placeholder*="http"], input[name="image_url"], input[aria-label*="image"]');
         if (urlInput) {
           await urlInput.fill(imgUrl);
-          const ok = await page.$('button:has-text("Insert"), button:has-text("OK"), button:has-text("Upload")');
+          // Confirm insertion
+          const ok = await page.$('button:has-text("Insert"), button:has-text("OK"), button:has-text("Upload"), button:has-text("Add")');
           if (ok) await ok.click();
+          // small wait for UI to process
+          await page.waitForTimeout(800);
+          continue;
         }
       }
+
+      // Fallback: try pasting image URL into any visible input fields
+      const anyUrlInput = await page.$('input[type="url"], input[placeholder*="http"]');
+      if (anyUrlInput) {
+        await anyUrlInput.fill(imgUrl);
+        await anyUrlInput.press('Enter');
+        await page.waitForTimeout(800);
+        continue;
+      }
+
+      // If none of the above worked, try to set the main image via meta or image uploader widget (best-effort)
+      // This is intentionally generic; adjust to your Systeme UI if needed.
+    } catch (err) {
+      console.warn(`Image handling error for ${imgUrl}:`, err.message);
+      // continue to next image
     }
   }
 
@@ -113,7 +131,6 @@ async function createProductViaUI(page, product) {
 
   // Wait for success indicator
   await page.waitForTimeout(3000);
-  // Optionally check for success message
   const success = await page.$('text=Product created, text=Saved, text=Success');
   return !!success;
 }
@@ -141,9 +158,7 @@ async function createProductViaUI(page, product) {
   const pass = process.env.SYSTEME_PASS;
   if (!user || !pass) throw new Error('Missing SYSTEME_USER or SYSTEME_PASS env vars');
 
-  // Go to login page
   await page.goto('https://app.systeme.io/login', { waitUntil: 'networkidle' });
-  // Fill login form - adjust selectors if needed
   await page.fill('input[name="email"], input[type="email"]', user);
   await page.fill('input[name="password"], input[type="password"]', pass);
   await page.click('button:has-text("Log in"), button:has-text("Sign in")');
@@ -153,22 +168,18 @@ async function createProductViaUI(page, product) {
     const product = doc.data();
     product._id = doc.id;
 
-    // 🔹 Normalize required fields and apply fallback image
+    // Normalize required fields and apply fallback image
     product.title = product.title || `Product ${product._id}`;
     if (!product.description_html && product.description) {
       product.description_html = product.description;
     }
-    // Ensure price fields exist in at least one currency
     if (!product.price_usd && !product.price_sar && typeof product.price === 'number') {
-      // If a generic price exists, assume SAR and derive USD
       product.price_sar = product.price_sar || product.price;
       product.price_usd = product.price_usd || Number((product.price_sar / 3.75).toFixed(2));
     }
-    // Ensure images array exists with at least one image (fallback logo)
     if (!Array.isArray(product.images) || product.images.length === 0) {
       product.images = [FALLBACK_IMAGE_URL];
     }
-    // Ensure flags exist
     if (typeof product.published !== 'boolean') {
       product.published = false;
     }
@@ -189,14 +200,16 @@ async function createProductViaUI(page, product) {
       } else {
         console.error('Failed to detect success for', product.title);
       }
-      // small delay between items
       await page.waitForTimeout(1500 + Math.floor(Math.random() * 1000));
     } catch (err) {
       console.error('Error publishing', product.title, err.message);
-      // take screenshot for debugging
       const file = path.join(process.cwd(), `error-${doc.id}.png`);
-      await page.screenshot({ path: file, fullPage: true });
-      console.log('Saved screenshot', file);
+      try {
+        await page.screenshot({ path: file, fullPage: true });
+        console.log('Saved screenshot', file);
+      } catch (sErr) {
+        console.warn('Screenshot failed:', sErr.message);
+      }
     }
   }
 
