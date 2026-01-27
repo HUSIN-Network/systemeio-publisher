@@ -33,7 +33,7 @@ jobs:
         run: |
           node publish.js
 
-      - name: Setup Python (for API page publishing)
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
@@ -45,12 +45,10 @@ jobs:
             pip install -r requirements.txt
           fi
 
-      - name: Run Python publisher (update Systeme pages via API)
+      - name: Run Python publisher (update Systeme pages via API) - guarded in shell
         env:
-          # Reuse the same Firebase service account so the Python publisher can access Firestore if needed
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          # Systeme API credentials (must be added to repo secrets)
           SYSTEME_API_KEY: ${{ secrets.SYSTEME_API_KEY }}
           SYSTEME_WEBSITE_ID: ${{ secrets.SYSTEME_WEBSITE_ID }}
           SYSTEME_HOME_PAGE_ID: ${{ secrets.SYSTEME_HOME_PAGE_ID }}
@@ -60,16 +58,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           if [ -n "${SYSTEME_API_KEY}" ] && [ -n "${SYSTEME_WEBSITE_ID}" ]; then
-            python3 - <<'PY'
-import os
-try:
-    from agent1_core import publish_all
-    publish_all()
-    print("Pages published via Systeme API.")
-except Exception as e:
-    print("Python publisher failed:", e)
-    raise
-PY
+            python3 -c "from agent1_core import publish_all; publish_all(); print('Pages published via Systeme API.')"
           else
             echo "SYSTEME_API_KEY or SYSTEME_WEBSITE_ID not set; skipping API page publish."
           fi
