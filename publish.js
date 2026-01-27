@@ -8,6 +8,9 @@ const path = require('path');
 const { chromium } = require('playwright');
 const admin = require('firebase-admin');
 
+// Global fallback image (your logo on systeme.io)
+const FALLBACK_IMAGE_URL = 'https://d1yei2z3i6k35z.cloudfront.net/thumb_150/697801a52e93c_MAINLOGO.PNG';
+
 async function initFirebase() {
   const svcBase64 = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (!svcBase64) throw new Error('Missing FIREBASE_SERVICE_ACCOUNT env var');
@@ -118,7 +121,11 @@ async function createProductViaUI(page, product) {
 (async () => {
   const db = await initFirebase();
   const col = process.env.FIREBASE_COLLECTION || 'products';
-  const q = db.collection(col).where('status', '==', 'approved').where('published', '==', false).limit(20);
+  const q = db.collection(col)
+    .where('status', '==', 'approved')
+    .where('published', '==', false)
+    .limit(20);
+
   const snapshot = await q.get();
   if (snapshot.empty) {
     console.log('No approved unpublished products found.');
@@ -145,6 +152,30 @@ async function createProductViaUI(page, product) {
   for (const doc of snapshot.docs) {
     const product = doc.data();
     product._id = doc.id;
+
+    // 🔹 Normalize required fields and apply fallback image
+    product.title = product.title || `Product ${product._id}`;
+    if (!product.description_html && product.description) {
+      product.description_html = product.description;
+    }
+    // Ensure price fields exist in at least one currency
+    if (!product.price_usd && !product.price_sar && typeof product.price === 'number') {
+      // If a generic price exists, assume SAR and derive USD
+      product.price_sar = product.price_sar || product.price;
+      product.price_usd = product.price_usd || Number((product.price_sar / 3.75).toFixed(2));
+    }
+    // Ensure images array exists with at least one image (fallback logo)
+    if (!Array.isArray(product.images) || product.images.length === 0) {
+      product.images = [FALLBACK_IMAGE_URL];
+    }
+    // Ensure flags exist
+    if (typeof product.published !== 'boolean') {
+      product.published = false;
+    }
+    if (!product.status) {
+      product.status = 'approved';
+    }
+
     try {
       console.log('Publishing', product.title || product._id);
       const ok = await createProductViaUI(page, product);
