@@ -89,7 +89,6 @@ jobs:
           python3 -m pip --version || true
           echo "=== quick import test (uses GITHUB_WORKSPACE from env) ==="
           python3 - <<'PY'
-
           import os, sys, importlib
           ws = os.environ.get('GITHUB_WORKSPACE', '.')
           print("Using workspace:", ws)
@@ -102,29 +101,6 @@ jobs:
               print("agent1_core import FAILED:", type(e).__name__, e)
               raise
           PY
-          import os, sys, importlib
-          ws = os.environ.get('GITHUB_WORKSPACE', '.')
-          print("Using workspace:", ws)
-          sys.path.append(ws)
-          importlib.invalidate_caches()
-          try:
-              import agent1_core
-              print("agent1_core import OK")
-          except Exception as e:
-              print("agent1_core import FAILED:", type(e).__name__, e)
-              raise
-          PY
-ws = os.environ.get('GITHUB_WORKSPACE', '.')
-print("Using workspace:", ws)
-sys.path.append(ws)
-importlib.invalidate_caches()
-try:
-    import agent1_core
-    print("agent1_core import OK")
-except Exception as e:
-    print("agent1_core import FAILED:", type(e).__name__, e)
-    raise
-PY
 
       - name: Run Python publisher
         env:
@@ -233,49 +209,27 @@ PY
 
           echo "=== Specific runtime checks and clear error lines ==="
           python3 - <<'PY'
-
           import os, sys, importlib
           ws = os.environ.get('GITHUB_WORKSPACE', '.')
           print("Using workspace:", ws)
           sys.path.append(ws)
           importlib.invalidate_caches()
+          def check(pkg):
+              try:
+                  importlib.import_module(pkg)
+                  print(f"{pkg} import OK")
+              except Exception as e:
+                  print(f"ERROR_IMPORT::{pkg}::{type(e).__name__}::{e}")
+                  print(f"::error::{pkg} import failed: {type(e).__name__} {e}")
+          check('requests')
+          check('google.cloud.firestore')
           try:
               import agent1_core
               print("agent1_core import OK")
           except Exception as e:
-              print("agent1_core import FAILED:", type(e).__name__, e)
-              raise
+              print(f"ERROR_IMPORT::agent1_core::{type(e).__name__}::{e}")
+              print(f"::error::agent1_core import failed: {type(e).__name__} {e}")
           PY
-          import os, sys, importlib
-          ws = os.environ.get('GITHUB_WORKSPACE', '.')
-          print("Using workspace:", ws)
-          sys.path.append(ws)
-          importlib.invalidate_caches()
-          try:
-              import agent1_core
-              print("agent1_core import OK")
-          except Exception as e:
-              print("agent1_core import FAILED:", type(e).__name__, e)
-              raise
-          PY
-ws = os.environ.get('GITHUB_WORKSPACE', '.')
-sys.path.append(ws)
-def check(pkg):
-    try:
-        importlib.import_module(pkg)
-        print(f"{pkg} import OK")
-    except Exception as e:
-        print(f"ERROR_IMPORT::{pkg}::{type(e).__name__}::{e}")
-        print(f"::error::{pkg} import failed: {type(e).__name__} {e}")
-check('requests')
-check('google.cloud.firestore')
-try:
-    import agent1_core
-    print("agent1_core import OK")
-except Exception as e:
-    print(f"ERROR_IMPORT::agent1_core::{type(e).__name__}::{e}")
-    print(f"::error::agent1_core import failed: {type(e).__name__} {e}")
-PY
 
           echo "=== Create failure summary file ==="
           {
@@ -315,5 +269,3 @@ PY
       - name: Success marker
         if: success()
         run: echo "Publish workflow completed successfully."
-
-
