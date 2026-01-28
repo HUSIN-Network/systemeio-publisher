@@ -6,6 +6,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
 
     steps:
       - name: Checkout repository
@@ -18,10 +19,13 @@ jobs:
 
       - name: Install Node dependencies and Playwright
         run: |
+          set -euo pipefail
+          echo "Installing Node dependencies"
           npm install
+          echo "Installing Playwright browsers"
           npx playwright install --with-deps
 
-      - name: Run Node publisher (create products via UI)
+      - name: Run Node publisher (create products via UI) with retries
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
@@ -30,7 +34,27 @@ jobs:
           SYSTEME_PASS: ${{ secrets.SYSTEME_PASS }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
-          node publish.js
+          set -euo pipefail
+          attempts=0
+          max_attempts=3
+          until [ $attempts -ge $max_attempts ]
+          do
+            attempts=$((attempts+1))
+            echo "Node publish attempt $attempts/$max_attempts"
+            if node publish.js; then
+              echo "Node publisher succeeded on attempt $attempts"
+              break
+            else
+              echo "Node publisher failed on attempt $attempts"
+              # list workspace for debugging
+              ls -la || true
+              sleep $((5 * attempts))
+            fi
+          done
+          if [ $attempts -ge $max_attempts ]; then
+            echo "Node publisher failed after $max_attempts attempts"
+            exit 1
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -38,10 +62,45 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python dependencies
-       run: |
-         python -m pip install --upgrade pip
-         pip install -r requirements.txt
-         pip install -e .
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            echo "Installing from requirements.txt"
+            pip install -r requirements.txt
+          else
+            echo "requirements.txt not found; installing minimal runtime deps"
+            pip install requests google-cloud-firestore google-auth || true
+          fi
+          # If this repo is a package, install it editable so imports work
+          if [ -f setup.py ] || [ -f pyproject.toml ]; then
+            pip install -e .
+          fi
+
+      - name: Debug: workspace and quick import test
+        env:
+          FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
+        run: |
+          set -euo pipefail
+          echo "=== workspace listing ==="
+          ls -la
+          echo "=== check agent1_core presence ==="
+          ls -la agent1_core* || true
+          echo "=== python version & pip ==="
+          python3 --version || true
+          python3 -m pip --version || true
+          echo "=== quick import test (adds workspace to sys.path) ==="
+          python3 - <<'PY'
+import sys, importlib
+sys.path.append('${GITHUB_WORKSPACE}')
+importlib.invalidate_caches()
+try:
+    import agent1_core
+    print("agent1_core import OK")
+except Exception as e:
+    print("agent1_core import FAILED:", type(e).__name__, e)
+    raise
+PY
 
       - name: Run Python publisher
         env:
@@ -50,13 +109,151 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
+          set -euo pipefail
           if [ -n "${SYSTEME_API_KEY}" ] && [ -n "${SYSTEME_WEBSITE_ID}" ]; then
             python3 -c "import sys; print('PYTHONPATH first entries:', sys.path[:3]); from agent1_core import publish_all; publish_all(); print('Pages published via Systeme API.')"
           else
             echo "SYSTEME_API_KEY or SYSTEME_WEBSITE_ID not set; skipping."
           fi
 
-      - name: Upload logs and screenshots
+      - name: Failure diagnostics (runs only on failure)
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail || true
+          echo "=== FAILURE DIAGNOSTICS START ==="
+          echo "Timestamp: $(date --utc +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "Run id: $GITHUB_RUN_ID"
+          echo "Workspace: $GITHUB_WORKSPACE"
+          echo
+
+          echo "=== Git status and last commit ==="
+          git --no-pager status --porcelain || true
+          echo "---- last commit ----"
+          git --no-pager log -1 --pretty=fuller || true
+          echo
+
+          echo "=== Node / npm / playwright info ==="
+          node --version || true
+          npm --version || true
+          npx playwright --version || true
+          echo
+
+          echo "=== Python info ==="
+          python3 --version || true
+          python3 -m pip --version || true
+          echo
+
+          echo "=== Workspace listing (top-level) ==="
+          ls -la || true
+          echo
+
+          echo "=== Show agent1_core presence ==="
+          if ls -la agent1_core* 2>/dev/null; then
+            echo "agent1_core files present"
+          else
+            echo "::error::agent1_core not found in repository root. Ensure agent1_core.py or agent1_core/ package is committed at repo root."
+          fi
+          echo
+
+          echo "=== Show requirements.txt (if present) ==="
+          if [ -f requirements.txt ]; then
+            echo "requirements.txt:"
+            sed -n '1,200p' requirements.txt || true
+          else
+            echo "::error::requirements.txt not found. Add a requirements.txt listing 'requests' and other deps."
+          fi
+          echo
+
+          echo "=== Show package.json and package-lock.json presence ==="
+          if [ -f package.json ]; then
+            echo "package.json exists"
+          else
+            echo "::error::package.json not found; Node install may fail if project is missing package.json."
+          fi
+          if [ -f package-lock.json ]; then
+            echo "package-lock.json exists"
+          else
+            echo "package-lock.json not found (this is OK if you use npm install)."
+          fi
+          echo
+
+          echo "=== pip freeze (first 200 lines) ==="
+          python3 -m pip freeze 2>/dev/null | sed -n '1,200p' || true
+          echo
+
+          echo "=== Last lines of any .log files (up to 200 lines each) ==="
+          for f in *.log publish-*.log playwright-report/**/trace.*.log 2>/dev/null; do
+            if [ -f "$f" ]; then
+              echo "---- tail of $f ----"
+              tail -n 200 "$f" || true
+              echo
+            fi
+          done || true
+
+          echo "=== Playwright report directory listing (if exists) ==="
+          if [ -d playwright-report ]; then
+            find playwright-report -maxdepth 2 -type f -printf '%p %s bytes\n' || true
+          else
+            echo "no playwright-report directory"
+          fi
+          echo
+
+          echo "=== Environment variables (non-secret subset) ==="
+          echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
+          echo "GITHUB_REF=$GITHUB_REF"
+          echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+          echo "GITHUB_RUN_NUMBER=$GITHUB_RUN_NUMBER"
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          echo
+
+          echo "=== Specific runtime checks and clear error lines ==="
+          # Check for requests package
+          python3 - <<'PY'
+import importlib, sys
+sys.path.append('${GITHUB_WORKSPACE}')
+def check(pkg):
+    try:
+        importlib.import_module(pkg)
+        print(f"{pkg} import OK")
+    except Exception as e:
+        print(f"ERROR_IMPORT::{pkg}::{type(e).__name__}::{e}")
+        # Emit GitHub Actions error annotation
+        print(f"::error::{pkg} import failed: {type(e).__name__} {e}")
+check('requests')
+check('google.cloud.firestore')
+try:
+    import agent1_core
+    print("agent1_core import OK")
+except Exception as e:
+    print(f"ERROR_IMPORT::agent1_core::{type(e).__name__}::{e}")
+    print(f"::error::agent1_core import failed: {type(e).__name__} {e}")
+PY
+
+          echo "=== Create failure summary file ==="
+          {
+            echo "Run: $GITHUB_REPOSITORY@$GITHUB_SHA"
+            echo "Run id: $GITHUB_RUN_ID"
+            echo "Timestamp: $(date --utc +'%Y-%m-%dT%H:%M:%SZ')"
+            echo
+            echo "Node: $(node --version 2>/dev/null || echo 'node missing')"
+            echo "npm: $(npm --version 2>/dev/null || echo 'npm missing')"
+            echo "python: $(python3 --version 2>/dev/null || echo 'python missing')"
+            echo
+            echo "Files present:"
+            ls -1 || true
+            echo
+            echo "Last 50 lines of Node step log (if publish.log exists):"
+            if [ -f publish.log ]; then tail -n 50 publish.log; else echo "publish.log not found"; fi
+            echo
+            echo "Last 50 lines of Python step log (if python-publish.log exists):"
+            if [ -f python-publish.log ]; then tail -n 50 python-publish.log; else echo "python-publish.log not found"; fi
+          } > failure-summary.txt
+
+          echo "=== FAILURE DIAGNOSTICS END ==="
+          echo "failure-summary.txt created; it will be uploaded by the artifact step."
+
+      - name: Upload logs and screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -64,3 +261,10 @@ jobs:
           path: |
             *.png
             *.log
+            publish-*.log
+            failure-summary.txt
+            playwright-report/**
+
+      - name: Success marker
+        if: success()
+        run: echo "Publish workflow completed successfully."
