@@ -32,9 +32,9 @@ jobs:
 
       - name: Write products.json
         run: |
-          echo "$PRODUCTS_JSON" > products.json
+          echo "$PRODUCTS_JSON_B64" | base64 --decode > products.json
         env:
-          PRODUCTS_JSON: ${{ secrets.PRODUCTS_JSON }}
+          PRODUCTS_JSON_B64: ${{ secrets.PRODUCTS_JSON_B64 }}
 
       - name: Run publisher
         run: node publish.cjs
