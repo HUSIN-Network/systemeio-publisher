@@ -1,4 +1,4 @@
-// publish.js — HUSIN Production Publisher (Variants + Telegram + Logging)
+// publish.cjs — HUSIN Production Publisher (Variants + Telegram + Logging)
 
 const { chromium } = require("playwright");
 const fs = require("fs");
@@ -127,16 +127,26 @@ async function publishProduct(page, product) {
     const saveBtn = page.getByRole("button", { name: /Save|Create/i });
     await saveBtn.click();
 
+    // 5. Confirm success + extract product URL
     await page.waitForTimeout(3000);
 
-    const success = !page.url().includes("/dashboard/products/create");
+    const finalUrl = page.url();
+    const productCreated = !finalUrl.includes("/dashboard/products/create");
 
-    if (success) {
+    if (productCreated) {
       console.log(`✅ SUCCESS: [${productId}] ${title}`);
-      await sendTelegram(`✅ <b>SUCCESS</b>\nProduct: <b>${title}</b>\nID: <code>${productId}</code>`);
+      console.log(`🔗 Product URL: ${finalUrl}`);
+
+      await sendTelegram(
+        `✅ <b>SUCCESS</b>\n` +
+        `Product: <b>${title}</b>\n` +
+        `ID: <code>${productId}</code>\n` +
+        `URL: <a href="${finalUrl}">${finalUrl}</a>`
+      );
     } else {
       throw new Error("Systeme.io did not redirect — product may not be saved.");
     }
+
   } catch (err) {
     console.error(`❌ FAILED: [${productId}] ${title}`, err.message);
 
@@ -179,25 +189,3 @@ main().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
-
-// -------------------------
-// Confirm success + extract product URL
-// -------------------------
-await page.waitForTimeout(3000);
-
-const finalUrl = page.url();
-const productCreated = !finalUrl.includes("/dashboard/products/create");
-
-if (productCreated) {
-  console.log(`✅ SUCCESS: [${productId}] ${title}`);
-  console.log(`🔗 Product URL: ${finalUrl}`);
-
-  await sendTelegram(
-    `✅ <b>SUCCESS</b>\n` +
-    `Product: <b>${title}</b>\n` +
-    `ID: <code>${productId}</code>\n` +
-    `URL: <a href="${finalUrl}">${finalUrl}</a>`
-  );
-} else {
-  throw new Error("Systeme.io did not redirect — product may not be saved.");
-}
