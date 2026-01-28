@@ -18,14 +18,13 @@ jobs:
 
       - name: Install Node dependencies and Playwright
         run: |
-          npm install
+          npm ci
           npx playwright install --with-deps
 
       - name: Run Node publisher (create products via UI)
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          # Point to the artifacts path where growth_engine writes products
           FIREBASE_COLLECTION: artifacts/husin-network/public/data/products
           SYSTEME_USER: ${{ secrets.SYSTEME_USER }}
           SYSTEME_PASS: ${{ secrets.SYSTEME_PASS }}
@@ -38,34 +37,23 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Python dependencies (if any)
-        run: |
-          if [ -f requirements.txt ]; then
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-          fi
       - name: Install Python dependencies
         run: |
-         python -m pip install --upgrade pip
-         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-         if [ -f setup.py ] || [ -f pyproject.toml ]; then pip install -e .; fi
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f setup.py ] || [ -f pyproject.toml ]; then pip install -e .; fi
 
-      - name: Run Python publisher (update Systeme pages via API) - guarded in shell
+      - name: Run Python publisher
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           SYSTEME_API_KEY: ${{ secrets.SYSTEME_API_KEY }}
           SYSTEME_WEBSITE_ID: ${{ secrets.SYSTEME_WEBSITE_ID }}
-          SYSTEME_HOME_PAGE_ID: ${{ secrets.SYSTEME_HOME_PAGE_ID }}
-          SYSTEME_CATEGORIES_PAGE_ID: ${{ secrets.SYSTEME_CATEGORIES_PAGE_ID }}
-          SYSTEME_PRODUCTS_PAGE_ID: ${{ secrets.SYSTEME_PRODUCTS_PAGE_ID }}
-          SYSTEME_BUNDLES_PAGE_ID: ${{ secrets.SYSTEME_BUNDLES_PAGE_ID }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+          FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           if [ -n "${SYSTEME_API_KEY}" ] && [ -n "${SYSTEME_WEBSITE_ID}" ]; then
-            python3 -c "from agent1_core import publish_all; publish_all(); print('Pages published via Systeme API.')"
+            python3 -c "import sys; print('PYTHONPATH first entries:', sys.path[:3]); from agent1_core import publish_all; publish_all(); print('Pages published via Systeme API.')"
           else
-            echo "SYSTEME_API_KEY or SYSTEME_WEBSITE_ID not set; skipping API page publish."
+            echo "SYSTEME_API_KEY or SYSTEME_WEBSITE_ID not set; skipping."
           fi
 
       - name: Upload logs and screenshots
