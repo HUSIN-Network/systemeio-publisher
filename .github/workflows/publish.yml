@@ -37,7 +37,7 @@ jobs:
           PRODUCTS_JSON: ${{ secrets.PRODUCTS_JSON }}
 
       - name: Run publisher
-        run: node publish.js
+        run: node publish.cjs
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
