@@ -1,4 +1,5 @@
 {
+  "type": "module"
   "name": "systemeio-publisher",
   "version": "1.0.0",
   "main": "publish.js",
