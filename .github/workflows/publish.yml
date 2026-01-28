@@ -24,7 +24,14 @@ jobs:
           npm install
           echo "Installing Playwright browsers"
           npx playwright install --with-deps
-
+     
+      - name: Install Node dependencies and Playwright
+        shell: bash
+        run: |
+          echo "$SYSTEME_STORAGE_STATE_BASE64" | base64 --decode > storageState.json
+        env:
+          SYSTEME_STORAGE_STATE_BASE64: ${{ secrets.SYSTEME_STORAGE_STATE_BASE64 }}
+     
       - name: Run Node publisher with retries
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
