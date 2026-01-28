@@ -179,3 +179,25 @@ main().catch((err) => {
   console.error("Fatal error:", err);
   process.exit(1);
 });
+
+// -------------------------
+// Confirm success + extract product URL
+// -------------------------
+await page.waitForTimeout(3000);
+
+const finalUrl = page.url();
+const productCreated = !finalUrl.includes("/dashboard/products/create");
+
+if (productCreated) {
+  console.log(`✅ SUCCESS: [${productId}] ${title}`);
+  console.log(`🔗 Product URL: ${finalUrl}`);
+
+  await sendTelegram(
+    `✅ <b>SUCCESS</b>\n` +
+    `Product: <b>${title}</b>\n` +
+    `ID: <code>${productId}</code>\n` +
+    `URL: <a href="${finalUrl}">${finalUrl}</a>`
+  );
+} else {
+  throw new Error("Systeme.io did not redirect — product may not be saved.");
+}
