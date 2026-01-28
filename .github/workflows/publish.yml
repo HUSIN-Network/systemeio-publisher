@@ -25,7 +25,7 @@ jobs:
           echo "Installing Playwright browsers"
           npx playwright install --with-deps
 
-      - name: Run Node publisher (create products via UI) with retries
+      - name: Run Node publisher with retries
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
@@ -75,7 +75,7 @@ jobs:
             pip install -e .
           fi
 
-      - name: Debug: workspace and quick import test
+      - name: Debug workspace and quick import test
         env:
           FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
         run: |
@@ -87,10 +87,12 @@ jobs:
           echo "=== python version & pip ==="
           python3 --version || true
           python3 -m pip --version || true
-          echo "=== quick import test (adds workspace to sys.path) ==="
+          echo "=== quick import test (uses GITHUB_WORKSPACE from env) ==="
           python3 - <<'PY'
-import sys, importlib
-sys.path.append('${GITHUB_WORKSPACE}')
+import os, sys, importlib
+ws = os.environ.get('GITHUB_WORKSPACE', '.')
+print("Using workspace:", ws)
+sys.path.append(ws)
 importlib.invalidate_caches()
 try:
     import agent1_core
@@ -114,7 +116,7 @@ PY
             echo "SYSTEME_API_KEY or SYSTEME_WEBSITE_ID not set; skipping."
           fi
 
-      - name: Failure diagnostics (runs only on failure)
+      - name: Failure diagnostics
         if: failure()
         shell: bash
         run: |
@@ -207,8 +209,9 @@ PY
 
           echo "=== Specific runtime checks and clear error lines ==="
           python3 - <<'PY'
-import importlib, sys
-sys.path.append('${GITHUB_WORKSPACE}')
+import os, importlib, sys
+ws = os.environ.get('GITHUB_WORKSPACE', '.')
+sys.path.append(ws)
 def check(pkg):
     try:
         importlib.import_module(pkg)
