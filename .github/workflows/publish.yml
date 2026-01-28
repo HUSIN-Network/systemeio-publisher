@@ -89,7 +89,31 @@ jobs:
           python3 -m pip --version || true
           echo "=== quick import test (uses GITHUB_WORKSPACE from env) ==="
           python3 - <<'PY'
-import os, sys, importlib
+
+          import os, sys, importlib
+          ws = os.environ.get('GITHUB_WORKSPACE', '.')
+          print("Using workspace:", ws)
+          sys.path.append(ws)
+          importlib.invalidate_caches()
+          try:
+              import agent1_core
+              print("agent1_core import OK")
+          except Exception as e:
+              print("agent1_core import FAILED:", type(e).__name__, e)
+              raise
+          PY
+          import os, sys, importlib
+          ws = os.environ.get('GITHUB_WORKSPACE', '.')
+          print("Using workspace:", ws)
+          sys.path.append(ws)
+          importlib.invalidate_caches()
+          try:
+              import agent1_core
+              print("agent1_core import OK")
+          except Exception as e:
+              print("agent1_core import FAILED:", type(e).__name__, e)
+              raise
+          PY
 ws = os.environ.get('GITHUB_WORKSPACE', '.')
 print("Using workspace:", ws)
 sys.path.append(ws)
@@ -209,7 +233,31 @@ PY
 
           echo "=== Specific runtime checks and clear error lines ==="
           python3 - <<'PY'
-import os, importlib, sys
+
+          import os, sys, importlib
+          ws = os.environ.get('GITHUB_WORKSPACE', '.')
+          print("Using workspace:", ws)
+          sys.path.append(ws)
+          importlib.invalidate_caches()
+          try:
+              import agent1_core
+              print("agent1_core import OK")
+          except Exception as e:
+              print("agent1_core import FAILED:", type(e).__name__, e)
+              raise
+          PY
+          import os, sys, importlib
+          ws = os.environ.get('GITHUB_WORKSPACE', '.')
+          print("Using workspace:", ws)
+          sys.path.append(ws)
+          importlib.invalidate_caches()
+          try:
+              import agent1_core
+              print("agent1_core import OK")
+          except Exception as e:
+              print("agent1_core import FAILED:", type(e).__name__, e)
+              raise
+          PY
 ws = os.environ.get('GITHUB_WORKSPACE', '.')
 sys.path.append(ws)
 def check(pkg):
@@ -267,3 +315,5 @@ PY
       - name: Success marker
         if: success()
         run: echo "Publish workflow completed successfully."
+
+
