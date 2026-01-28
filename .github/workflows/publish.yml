@@ -18,7 +18,7 @@ jobs:
 
       - name: Install Node dependencies and Playwright
         run: |
-          npm ci
+          npm install
           npx playwright install --with-deps
 
       - name: Run Node publisher (create products via UI)
