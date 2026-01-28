@@ -102,6 +102,19 @@ jobs:
               raise
           PY
 
+      - name: Validate Systeme credentials
+        shell: bash
+        run: |
+          if [ -z "${SYSTEME_USER:-}" ]; then
+           echo "::error::Missing SYSTEME_USER secret. It should be the account email (e.g., civildynamo@gmail.com)."
+           exit 1
+          fi
+          if [[ ! "${SYSTEME_USER}" =~ "@" ]]; then
+           echo "::error::SYSTEME_USER does not look like an email address. Please set SYSTEME_USER to the account email (e.g., civildynamo@gmail.com)."
+           exit 1
+          fi
+            echo "SYSTEME_USER looks like an email address; proceeding."
+
       - name: Run Python publisher
         env:
           SYSTEME_API_KEY: ${{ secrets.SYSTEME_API_KEY }}
