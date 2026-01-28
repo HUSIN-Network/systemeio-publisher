@@ -89,145 +89,29 @@ jobs:
           python3 -m pip --version || true
           echo "=== quick import test (uses GITHUB_WORKSPACE from env) ==="
           python3 - <<'PY'
-import os, sys, importlib
-ws = os.environ.get('GITHUB_WORKSPACE', '.')
-print("Using workspace:", ws)
-sys.path.append(ws)
-importlib.invalidate_caches()
-try:
-    import agent1_core
-    print("agent1_core import OK")
-except Exception as e:
-    print("agent1_core import FAILED:", type(e).__name__, e)
-    raise
-PY
 
-      - name: Run Python publisher
-        env:
-          SYSTEME_API_KEY: ${{ secrets.SYSTEME_API_KEY }}
-          SYSTEME_WEBSITE_ID: ${{ secrets.SYSTEME_WEBSITE_ID }}
-          FIREBASE_SERVICE_ACCOUNT_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_BASE64 }}
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          if [ -n "${SYSTEME_API_KEY}" ] && [ -n "${SYSTEME_WEBSITE_ID}" ]; then
-            python3 -c "import sys; print('PYTHONPATH first entries:', sys.path[:3]); from agent1_core import publish_all; publish_all(); print('Pages published via Systeme API.')"
-          else
-            echo "SYSTEME_API_KEY or SYSTEME_WEBSITE_ID not set; skipping."
-          fi
-
-      - name: Failure diagnostics
-        if: failure()
-        shell: bash
-        run: |
-          set -euo pipefail || true
-          echo "=== FAILURE DIAGNOSTICS START ==="
-          echo "Timestamp: $(date --utc +'%Y-%m-%dT%H:%M:%SZ')"
-          echo "Run id: $GITHUB_RUN_ID"
-          echo "Workspace: $GITHUB_WORKSPACE"
-          echo
-
-          echo "=== Git status and last commit ==="
-          git --no-pager status --porcelain || true
-          echo "---- last commit ----"
-          git --no-pager log -1 --pretty=fuller || true
-          echo
-
-          echo "=== Node / npm / playwright info ==="
-          node --version || true
-          npm --version || true
-          npx playwright --version || true
-          echo
-
-          echo "=== Python info ==="
-          python3 --version || true
-          python3 -m pip --version || true
-          echo
-
-          echo "=== Workspace listing (top-level) ==="
-          ls -la || true
-          echo
-
-          echo "=== Show agent1_core presence ==="
-          if ls -la agent1_core* 2>/dev/null; then
-            echo "agent1_core files present"
-          else
-            echo "::error::agent1_core not found in repository root. Ensure agent1_core.py or agent1_core/ package is committed at repo root."
-          fi
-          echo
-
-          echo "=== Show requirements.txt (if present) ==="
-          if [ -f requirements.txt ]; then
-            echo "requirements.txt:"
-            sed -n '1,200p' requirements.txt || true
-          else
-            echo "::error::requirements.txt not found. Add a requirements.txt listing 'requests' and other deps."
-          fi
-          echo
-
-          echo "=== Show package.json and package-lock.json presence ==="
-          if [ -f package.json ]; then
-            echo "package.json exists"
-          else
-            echo "::error::package.json not found; Node install may fail if project is missing package.json."
-          fi
-          if [ -f package-lock.json ]; then
-            echo "package-lock.json exists"
-          else
-            echo "package-lock.json not found (this is OK if you use npm install)."
-          fi
-          echo
-
-          echo "=== pip freeze (first 200 lines) ==="
-          python3 -m pip freeze 2>/dev/null | sed -n '1,200p' || true
-          echo
-
-          echo "=== Last lines of any .log files (up to 200 lines each) ==="
-          for f in *.log publish-*.log playwright-report/**/trace.*.log 2>/dev/null; do
-            if [ -f "$f" ]; then
-              echo "---- tail of $f ----"
-              tail -n 200 "$f" || true
-              echo
-            fi
-          done || true
-
-          echo "=== Playwright report directory listing (if exists) ==="
-          if [ -d playwright-report ]; then
-            find playwright-report -maxdepth 2 -type f -printf '%p %s bytes\n' || true
-          else
-            echo "no playwright-report directory"
-          fi
-          echo
-
-          echo "=== Environment variables (non-secret subset) ==="
-          echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
-          echo "GITHUB_REF=$GITHUB_REF"
-          echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
-          echo "GITHUB_RUN_NUMBER=$GITHUB_RUN_NUMBER"
-          echo "GITHUB_SHA=$GITHUB_SHA"
-          echo
-
-          echo "=== Specific runtime checks and clear error lines ==="
           python3 - <<'PY'
-import os, importlib, sys
-ws = os.environ.get('GITHUB_WORKSPACE', '.')
-sys.path.append(ws)
-def check(pkg):
-    try:
-        importlib.import_module(pkg)
-        print(f"{pkg} import OK")
-    except Exception as e:
-        print(f"ERROR_IMPORT::{pkg}::{type(e).__name__}::{e}")
-        print(f"::error::{pkg} import failed: {type(e).__name__} {e}")
-check('requests')
-check('google.cloud.firestore')
-try:
-    import agent1_core
-    print("agent1_core import OK")
-except Exception as e:
-    print(f"ERROR_IMPORT::agent1_core::{type(e).__name__}::{e}")
-    print(f"::error::agent1_core import failed: {type(e).__name__} {e}")
-PY
+          import os, sys, importlib
+          ws = os.environ.get('GITHUB_WORKSPACE', '.')
+          print("Using workspace:", ws)
+          sys.path.append(ws)
+          importlib.invalidate_caches()
+          def check(pkg):
+              try:
+                  importlib.import_module(pkg)
+                  print(f"{pkg} import OK")
+              except Exception as e:
+                  print(f"ERROR_IMPORT::{pkg}::{type(e).__name__}::{e}")
+                  print(f"::error::{pkg} import failed: {type(e).__name__} {e}")
+          check('requests')
+          check('google.cloud.firestore')
+          try:
+              import agent1_core
+              print("agent1_core import OK")
+          except Exception as e:
+              print(f"ERROR_IMPORT::agent1_core::{type(e).__name__}::{e}")
+              print(f"::error::agent1_core import failed: {type(e).__name__} {e}")
+          PY
 
           echo "=== Create failure summary file ==="
           {
@@ -263,6 +147,7 @@ PY
             publish-*.log
             failure-summary.txt
             playwright-report/**
+
 
       - name: Success marker
         if: success()
