@@ -1,308 +1,230 @@
-// publish.js – FINAL ROBUST VERSION
-// Uses storageState.json if present (no login needed)
-// Falls back to login only if storageState.json is missing
+// publish.js
+// HUSIN — Systeme.io physical product publisher (with variant support)
 
+const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const { chromium } = require('playwright');
-const admin = require('firebase-admin');
 
-const FALLBACK_IMAGE_URL =
-  'https://d1yei2z3i6k35z.cloudfront.net/thumb_150/697801a52e93c_MAINLOGO.PNG';
+/**
+ * Expected product shape (example):
+ * {
+ *   title: "Apple iPhone 15 Pro",
+ *   description: "<p>Flagship device...</p>",
+ *   sku: "IP15P-128-BLK",
+ *   priceSar: 3799,
+ *   weightGrams: 200,
+ *   imageUrl: "https://...",
+ *   options: [
+ *     { name: "Size", values: ["S", "M", "L", "XL"] },
+ *     { name: "Color", values: ["Black", "White", "Blue"] },
+ *     { name: "Storage", values: ["128GB", "256GB", "512GB"] },
+ *     { name: "Volume", values: ["50mm"] }
+ *   ]
+ * }
+ */
 
-const TIMEOUT_MS = Number(process.env.PUBLISH_TIMEOUT_MS || 45000);
-const SHORT_WAIT = 800;
+// ---------- CONFIG ----------
+const SYSTEME_BASE_URL = 'https://systeme.io';
+const PRODUCT_CREATE_URL = `${SYSTEME_BASE_URL}/dashboard/products/create`;
+const STORAGE_STATE_PATH = process.env.PLAYWRIGHT_STORAGE_STATE || 'storageState.json';
+const PRODUCTS_JSON_PATH = process.env.PRODUCTS_JSON_PATH || 'products.json';
+// ----------------------------
 
-async function initFirebase() {
-  const svcBase64 =
-    process.env.FIREBASE_SERVICE_ACCOUNT ||
-    process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+async function publishProduct(page, product) {
+  console.log(`\nPublishing product: ${product.title}`);
 
-  if (!svcBase64) throw new Error('Missing FIREBASE_SERVICE_ACCOUNT');
+  // 1. Go to product creation page
+  await page.goto(PRODUCT_CREATE_URL, { waitUntil: 'networkidle' });
 
-  const svcJson = Buffer.from(svcBase64, 'base64').toString('utf8');
-  const svc = JSON.parse(svcJson);
+  // 2. Fill basic fields
+  // Name
+  await page.getByLabel('Name', { exact: true }).fill(product.title);
 
-  admin.initializeApp({
-    credential: admin.credential.cert(svc),
-    projectId: process.env.FIREBASE_PROJECT_ID || svc.project_id,
-  });
+  // Description (fallback to plain text if HTML missing)
+  const description = product.description || product.description_html || product.title;
+  await page.getByLabel('Description', { exact: true }).fill(description);
 
-  return admin.firestore();
-}
+  // SKU
+  const sku =
+    product.sku ||
+    product.id ||
+    product._id ||
+    product.title.replace(/\s+/g, '-').toUpperCase().slice(0, 20);
+  await page.getByLabel('SKU', { exact: true }).fill(sku);
 
-function buildDescription(product) {
-  if (product.description_html) return product.description_html;
-  return `<h1>${product.title}</h1>
-<p>Category: ${product.category || ''}</p>
-<p>Price: ${
-    product.price_sar
-      ? product.price_sar + ' SAR'
-      : product.price_usd
-      ? product.price_usd + ' USD'
-      : ''
-  }</p>
-<p>Profit: ${product.profit_sar ? product.profit_sar + ' SAR' : ''}</p>`;
-}
+  // Product tax = 0
+  await page.getByLabel('Product tax', { exact: false }).fill('0');
 
-async function waitForAnySelector(page, selectors, opts = {}) {
-  for (const sel of selectors) {
+  // Tax behavior = Exclusive (if present)
+  const exclusiveRadio = page.getByLabel('Exclusive', { exact: true });
+  if (await exclusiveRadio.isVisible().catch(() => false)) {
+    await exclusiveRadio.check();
+  }
+
+  // Currency = Saudi Riyal (SAR)
+  // Depending on Systeme.io, this might be a select with visible text "Saudi Riyal"
+  const currencySelect = page.getByLabel('Currency', { exact: false });
+  if (await currencySelect.isVisible().catch(() => false)) {
     try {
-      await page.waitForSelector(sel, {
-        state: 'visible',
-        timeout: opts.timeout ?? TIMEOUT_MS,
-      });
-      return sel;
-    } catch {}
-  }
-  return null;
-}
-
-async function clickAny(page, selectors) {
-  for (const sel of selectors) {
-    try {
-      const el = await page.$(sel);
-      if (el) {
-        await el.click();
-        return true;
-      }
-    } catch {}
-  }
-  return false;
-}
-
-async function createProductViaUI(page, product) {
-  await page.goto('https://systeme.io/products/new', {
-    waitUntil: 'networkidle',
-  });
-
-  await page.waitForLoadState('networkidle');
-
-  const titleSelectors = [
-    'input[name="title"]',
-    'input[placeholder="Product name"]',
-    'textarea[name="title"]',
-    'input[aria-label="Product name"]',
-  ];
-
-  const foundTitleSel = await waitForAnySelector(page, titleSelectors);
-  if (!foundTitleSel) {
-    await page.screenshot({
-      path: `debug-title-missing-${Date.now()}.png`,
-      fullPage: true,
-    });
-    throw new Error('Title input not found');
-  }
-
-  const titleInput = await page.$(foundTitleSel);
-  await titleInput.fill(product.title || '');
-
-  const priceSelectors = [
-    'input[name="price"]',
-    'input[placeholder="Price"]',
-    'input[type="number"]',
-  ];
-
-  const foundPriceSel = await waitForAnySelector(page, priceSelectors, {
-    timeout: 3000,
-  });
-
-  if (foundPriceSel) {
-    const priceInput = await page.$(foundPriceSel);
-    const price =
-      product.price_usd ||
-      (product.price_sar ? (product.price_sar / 3.75).toFixed(2) : '');
-    await priceInput.fill(String(price));
-  }
-
-  const html = buildDescription(product);
-  const textarea = await page.$(
-    'textarea[name="description"], textarea[placeholder*="description"]'
-  );
-
-  if (textarea) {
-    await textarea.fill(html);
-  } else {
-    const editable = await page.$('[contenteditable="true"]');
-    if (editable) {
-      await editable.click();
-      await editable.fill('');
-      await editable.type(html, { delay: 5 });
+      await currencySelect.selectOption({ label: 'Saudi Riyal' });
+    } catch {
+      // Fallback: do nothing if already SAR
     }
   }
 
-  const images =
-    Array.isArray(product.images) && product.images.length
-      ? product.images
-      : [FALLBACK_IMAGE_URL];
+  // Main price (critical: must be >= 1)
+  const priceValue = Math.max(1, Number(product.priceSar || product.price || 1));
+  await page.getByLabel('Price', { exact: true }).fill(String(priceValue));
 
-  for (const imgUrl of images) {
-    try {
-      const addBtn = await page.$(
-        'button:has-text("Add image"), button:has-text("Upload image"), button:has-text("Add media")'
-      );
-      if (addBtn) {
-        await addBtn.click();
-        const urlInput = await page.$(
-          'input[placeholder*="http"], input[name="image_url"], input[type="url"]'
-        );
-        if (urlInput) {
-          await urlInput.fill(imgUrl);
-          await clickAny(page, [
-            'button:has-text("Insert")',
-            'button:has-text("OK")',
-            'button:has-text("Upload")',
-          ]);
-          await page.waitForTimeout(SHORT_WAIT);
+  // Weight (grams)
+  const weightValue = Math.max(1, Number(product.weightGrams || product.weight || 100));
+  const weightInput = page.getByLabel('Weight', { exact: false });
+  if (await weightInput.isVisible().catch(() => false)) {
+    await weightInput.fill(String(weightValue));
+  }
+
+  // Inventory (optional) — we’ll leave unlimited by default
+  // Shipping — leave default (shipping enabled)
+
+  // 3. Handle options / variants (if provided)
+  if (Array.isArray(product.options) && product.options.length > 0) {
+    console.log('Adding options / variants...');
+
+    // Enable "This product has options" toggle
+    const optionsToggle = page.getByText('This product has options', { exact: false });
+    if (await optionsToggle.isVisible().catch(() => false)) {
+      await optionsToggle.click();
+    }
+
+    // For each option group
+    for (let i = 0; i < product.options.length; i++) {
+      const opt = product.options[i];
+      if (!opt || !opt.name || !Array.isArray(opt.values) || opt.values.length === 0) continue;
+
+      // If not the first option, click "Add another option"
+      if (i > 0) {
+        const addOptionBtn = page.getByText('Add another option', { exact: false });
+        if (await addOptionBtn.isVisible().catch(() => false)) {
+          await addOptionBtn.click();
         }
       }
-    } catch {}
+
+      // Locate the i-th option name input
+      const optionNameInputs = page.locator('input').filter({ hasText: undefined });
+      // We’ll use a more robust approach: find all "Option name" labels and index into them
+      const optionNameLabel = page.getByText('Option name', { exact: false }).nth(i);
+      await optionNameLabel.scrollIntoViewIfNeeded();
+      const optionNameInput = optionNameLabel.locator('xpath=following::input[1]');
+      await optionNameInput.fill(opt.name);
+
+      // Now fill values
+      // Systeme.io usually has one input per value with "Add another value" button
+      for (let j = 0; j < opt.values.length; j++) {
+        const value = opt.values[j];
+
+        if (j === 0) {
+          // First value goes into the first value input after this option block
+          const firstValueInput = optionNameLabel.locator('xpath=following::input[1]');
+          await firstValueInput.fill(value);
+        } else {
+          // Click "Add another value" then fill
+          const addValueBtn = page.getByText('Add another value', { exact: false }).nth(i);
+          if (await addValueBtn.isVisible().catch(() => false)) {
+            await addValueBtn.click();
+          }
+          // After clicking, the last input in this option block should be the new value
+          const valueInputs = optionNameLabel.locator('xpath=following::input');
+          const count = await valueInputs.count();
+          const lastValueInput = valueInputs.nth(count - 1);
+          await lastValueInput.fill(value);
+        }
+      }
+    }
+
+    // After options are set, Systeme.io will auto-generate the variant matrix.
+    // We DO NOT touch individual variant prices — they inherit the main price.
+  } else {
+    console.log('No options provided — publishing as simple product.');
   }
 
-  const saveSelectors = [
-    'button:has-text("Save")',
-    'button:has-text("Create")',
-    'button:has-text("Publish")',
-  ];
-
-  const foundSave = await waitForAnySelector(page, saveSelectors, {
-    timeout: 5000,
-  });
-
-  if (!foundSave) {
-    await page.screenshot({
-      path: `debug-save-missing-${Date.now()}.png`,
-      fullPage: true,
-    });
-    throw new Error('Save button not found');
+  // 4. Media (image) — optional, depends on your existing pipeline
+  // If you already handle images elsewhere, you can skip this.
+  // Otherwise, we can at least click "Select an image" and hope for a URL upload field.
+  if (product.imageUrl) {
+    try {
+      const selectImageBtn = page.getByText('Select an image', { exact: false });
+      if (await selectImageBtn.isVisible().catch(() => false)) {
+        await selectImageBtn.click();
+        // If Systeme.io supports URL-based upload, you’d handle it here.
+        // Since we don’t know the exact modal structure, we leave this as a future extension.
+      }
+    } catch (e) {
+      console.log('Image upload skipped (structure unknown).');
+    }
   }
 
-  const saveBtn = await page.$(foundSave);
-  await saveBtn.click();
+  // 5. Save product
+  const saveButton = page.getByRole('button', { name: /Save|Create/i });
+  await saveButton.click();
 
-  const successSelectors = [
-    'text=Product created',
-    'text=Saved',
-    'text=Success',
-  ];
+  // 6. Confirm success
+  // We can wait for redirect to product list or a success toast.
+  await page.waitForTimeout(3000);
 
-  const successSel = await waitForAnySelector(page, successSelectors, {
-    timeout: TIMEOUT_MS,
-  });
-
-  return !!successSel;
+  // Basic heuristic: check URL changed away from /products/create
+  const currentUrl = page.url();
+  if (!currentUrl.includes('/dashboard/products/create')) {
+    console.log(`✅ Product "${product.title}" created successfully.`);
+  } else {
+    console.warn(`⚠ Product "${product.title}" may not have been created (still on create page).`);
+  }
 }
 
-(async () => {
-  const db = await initFirebase();
-  const col = process.env.FIREBASE_COLLECTION || 'products';
-
-  const q = db
-    .collection(col)
-    .where('status', '==', 'approved')
-    .where('published', '==', false)
-    .limit(20);
-
-  const snapshot = await q.get();
-  if (snapshot.empty) {
-    console.log('No approved unpublished products found.');
-    process.exit(0);
+async function main() {
+  // Load products from JSON (your pipeline already prepares this)
+  const productsPath = path.resolve(PRODUCTS_JSON_PATH);
+  if (!fs.existsSync(productsPath)) {
+    console.error(`Products file not found: ${productsPath}`);
+    process.exit(1);
   }
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  const products = JSON.parse(fs.readFileSync(productsPath, 'utf8'));
+  if (!Array.isArray(products) || products.length === 0) {
+    console.error('No products found in products.json');
+    process.exit(1);
+  }
+
+  // Launch browser with stored session
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    storageState: STORAGE_STATE_PATH,
   });
-
-  const storageStatePath = fs.existsSync('storageState.json')
-    ? 'storageState.json'
-    : null;
-
-  const context = storageStatePath
-    ? await browser.newContext({ storageState: storageStatePath })
-    : await browser.newContext();
-
   const page = await context.newPage();
-  page.setDefaultTimeout(TIMEOUT_MS);
 
-  // If no storage state → login
-  if (!storageStatePath) {
-    const user = process.env.SYSTEME_USER;
-    const pass = process.env.SYSTEME_PASS;
+  console.log(`Loaded ${products.length} products. Starting publishing...`);
 
-    await page.goto('https://systeme.io/login', { waitUntil: 'networkidle' });
-
-    await waitForAnySelector(page, ['input[type="email"]']);
-    await page.fill('input[type="email"]', user);
-    await page.fill('input[type="password"]', pass);
-
-    await clickAny(page, [
-      'button:has-text("Log in")',
-      'button:has-text("Sign in")',
-      'button[type="submit"]',
-    ]);
-
-    const postLoginSel = await waitForAnySelector(
-      page,
-      ['text=Dashboard', 'a:has-text("Products")'],
-      { timeout: TIMEOUT_MS }
-    );
-
-    if (!postLoginSel) {
-      const ts = Date.now();
-      await page.screenshot({
-        path: `debug-login-failed-${ts}.png`,
-        fullPage: true,
-      });
-      fs.writeFileSync(
-        `debug-login-failed-${ts}.html`,
-        await page.content(),
-        'utf8'
-      );
-      throw new Error('Login failed');
-    }
-  }
-
-  for (const doc of snapshot.docs) {
-    const product = doc.data();
-    product._id = doc.id;
-
-    product.title = product.title || `Product ${product._id}`;
-    if (!product.description_html && product.description)
-      product.description_html = product.description;
-
-    if (!product.price_usd && product.price_sar)
-      product.price_usd = Number((product.price_sar / 3.75).toFixed(2));
-
-    if (!Array.isArray(product.images) || product.images.length === 0)
-      product.images = [FALLBACK_IMAGE_URL];
-
+  for (const product of products) {
     try {
-      console.log('Publishing', product.title);
-      const ok = await createProductViaUI(page, product);
-
-      if (ok) {
-        await db.collection(col).doc(doc.id).update({
-          published: true,
-          published_at: Date.now(),
-          published_by_job: process.env.GITHUB_RUN_ID || 'local-run',
-        });
-        console.log('Published', product.title);
-      } else {
-        console.error('Failed to detect success for', product.title);
-      }
+      await publishProduct(page, product);
     } catch (err) {
-      console.error('Error publishing', product.title, err.message);
-      const file = path.join(
-        process.cwd(),
-        `error-${doc.id}-${Date.now()}.png`
-      );
-      await page.screenshot({ path: file, fullPage: true });
+      console.error(`❌ Error publishing "${product.title}":`, err.message || err);
+      // Optional: take screenshot for debugging
+      try {
+        const safeTitle = (product.title || 'product').replace(/[^a-z0-9]/gi, '_').slice(0, 40);
+        await page.screenshot({ path: `error-${safeTitle}.png`, fullPage: true });
+      } catch {}
     }
-
-    await page.waitForTimeout(1500 + Math.random() * 1000);
   }
 
   await browser.close();
-  process.exit(0);
-})();
+  console.log('Publishing run completed.');
+}
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Fatal error in publish.js:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { publishProduct };
